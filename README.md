@@ -2,17 +2,78 @@
 
 Implemented three functionally equivalent multiply-accumulate (MAC) architectures with different pipeline depths and compared their timing, area, and latency after technology-mapped synthesis and static timing analysis (STA).
 
-This project explores the relationship between pipeline placement and critical-path delay, and demonstrates how adding pipeline stages does not always improve maximum clock frequency.
+This project explores how pipeline placement affects critical-path delay, area, and latency. Adding the first pipeline boundary improved estimated maximum clock frequency by **13.0%** at the cost of **32.9% greater cell area**. A second pipeline boundary increased area and latency further without materially improving frequency.
+
 
 ## Architecture
-Three implementations of the same arithmetic operation were compared:
-- `mac_unpipelined` &ndash; MULT &rarr; ADD &rarr; ADD &rarr; REG
-- `mac_pipe1` &ndash; MULT &rarr; REG &rarr; ADD &rarr; ADD &rarr; REG
-- `mac_pipe2` &ndash; MULT &rarr; REG &rarr; ADD &rarr; REG &rarr; ADD &rarr; REG
 
-Each implementation uses the same ready/valid interface with elastic handshakes and supports consumer stalling as well as backpressure. The implementations differ primarily in the number and placement of internal pipeline registers.
+All three implementations compute the same unsigned arithmetic expression:
 
-The additional registers divide the combinational arithmetic into progressively smaller paths at the cost of additional latency, sequential logic, and area.
+$$
+y = (a \times b) + (c \times d) + e
+$$
+
+The designs differ in the number and placement of pipeline register boundaries. Two multiplications execute in parallel, followed by the accumulation operations.
+
+```text
+ UNPIPELINED — 1-cycle latency                                                                               
+                                                                                           
+                                                ┌───┐                                      
+ a ───────────►┌────┐                           │   │                                      
+               │MULT├─┐                         │   │                                      
+ b ───────────►└────┘ └──►┌───┐      ┌───┐      │   │                                      
+                          │ADD├─────►│ADD├──────┤REG├──────► output                        
+ c ───────────►┌────┐ ┌──►└───┘      └─┬─┘      │   │                                      
+               │MULT├─┘                │        │   │                                      
+ d ───────────►└────┘                  │        │   │                                      
+                                       │        └───┘                                      
+ e ────────────────────────────────────┘                                                   
+                                                                                           
+                                                                                           
+ ──────────────────────────────────────────────────────────────────────────────────────────
+ 1-STAGE PIPELINE — 2-cycle latency                                                                        
+                                                                                           
+                           ┌───┐                                                           
+ a ───────────►┌────┐      │   │                            ┌───┐                          
+               │MULT├──────┤REG├──┐                         │   │                          
+ b ───────────►└────┘      │   │  │                         │   │                          
+                           └───┘  │   ┌───┐      ┌───┐      │   │                          
+                           ┌───┐  ├──►│ADD├─────►│ADD├──────┤REG├──────► output            
+ c ───────────►┌────┐      │   │  │   └───┘      └───┘      │   │                          
+               │MULT├──────┤REG├──┘                ▲        │   │                          
+ d ───────────►└────┘      │   │                   │        │   │                          
+                           └───┘                   │        └───┘                          
+                           ┌───┐                   │                                       
+                           │   │                   │                                       
+ e ────────────────────────┤REG├───────────────────┘                                       
+                           │   │                                                           
+                           └───┘                                                           
+                                                                                           
+────────────────────────────────────────────────────────────────────────────────────────── 
+ 2-STAGE PIPELINE — 3-cycle latency                                                                         
+                                                                                           
+                           ┌───┐                                                           
+ a ───────────►┌────┐      │   │                                       ┌───┐               
+               │MULT├──────┤REG├──┐              ┌───┐                 │   │               
+ b ───────────►└────┘      │   │  │              │   │                 │   │               
+                           └───┘  │   ┌───┐      │   │      ┌───┐      │   │               
+                           ┌───┐  ├──►│ADD├──────┤REG├─────►│ADD├──────┤REG├──────► output 
+ c ───────────►┌────┐      │   │  │   └───┘      │   │      └───┘      │   │               
+               │MULT├──────┤REG├──┘              │   │        ▲        │   │               
+ d ───────────►└────┘      │   │                 └───┘        │        │   │               
+                           └───┘                              │        └───┘               
+                           ┌───┐                 ┌───┐        │                            
+                           │   │                 │   │        │                            
+ e ────────────────────────┤REG├─────────────────┤REG┼────────┘                            
+                           │   │                 │   │                                     
+                           └───┘                 └───┘                                     
+```
+
+The diagrams show the arithmetic datapaths and register boundaries of the three implementations. Each `REG` block represents a bank of datapath registers rather than a single flip-flop.
+
+In `mac_pipe1`, the multiplication results and operand `e` are registered together before the additions. In `mac_pipe2`, `e` passes through another register to remain aligned with the intermediate sum.
+
+All implementations use elastic ready/valid handshakes to support stalls and backpressure. Handshake control is omitted from the diagrams for clarity; the indicated latencies assume uninterrupted processing.
 
 ## Verification
 Each architecture was tested using a self-checking SystemVerilog testbench to verify arithmetic correctness and ready/valid behavior. AI assistance was used to generate and refine portions of the SystemVerilog verification testbench, including stimulus and protocol checks. The generated verification code was reviewed and exercised through simulation and regression.
@@ -238,6 +299,4 @@ The timing results in this project are intended for **relative architectural com
 
 The analysis uses technology-mapped synthesis and pre-layout static timing analysis with the Nangate Open Cell Library. It does not represent a complete physical-design flow and does not include effects such as extracted routing parasitics, detailed placement and routing, clock-tree implementation, comprehensive process/voltage/temperature corner analysis, or a complete system-level I/O timing environment.
 
-The input-delay constraints are controlled assumptions used consistently across the three architectures rather than delays derived from a specific upstream block.
-
-As a result, the reported Fmax values should be interpreted as comparative estimates under a common timing model. The relative movement of critical paths and the resulting pipeline tradeoffs are the primary results of the experiment.
+The input-delay constraints are controlled assumptions used consistently across the three architectures rather than delays derived from a specific upstream block. Input delays are specified for the arithmetic operands (`a`, `b`, `c`, `d`, and `e`), but the timing environment does not comprehensively constrain the ready/valid interface or output timing. Consequently, the reported maximum frequencies represent the constrained setup-path behavior of these implementations rather than verified system-level operating limits.
